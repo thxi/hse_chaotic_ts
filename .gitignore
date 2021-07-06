@@ -1,0 +1,11 @@
+.DS_Store
+
+env
+
+.ipynb_checkpoints
+
+.idea
+__pycache__
+
+lorenz.txt
+result.txt
