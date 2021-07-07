@@ -24,12 +24,16 @@ class Lorentz:
         m_1 = self.Z(x, y, z, b)
 
         k_2 = self.X((x + k_1 * dt * 0.5), (y + l_1 * dt * 0.5), s)
-        l_2 = self.Y((x + k_1 * dt * 0.5), (y + l_1 * dt * 0.5), (z + m_1 * dt * 0.5), r)
-        m_2 = self.Z((x + k_1 * dt * 0.5), (y + l_1 * dt * 0.5), (z + m_1 * dt * 0.5), b)
+        l_2 = self.Y((x + k_1 * dt * 0.5), (y + l_1 * dt * 0.5),
+                     (z + m_1 * dt * 0.5), r)
+        m_2 = self.Z((x + k_1 * dt * 0.5), (y + l_1 * dt * 0.5),
+                     (z + m_1 * dt * 0.5), b)
 
         k_3 = self.X((x + k_2 * dt * 0.5), (y + l_2 * dt * 0.5), s)
-        l_3 = self.Y((x + k_2 * dt * 0.5), (y + l_2 * dt * 0.5), (z + m_2 * dt * 0.5), r)
-        m_3 = self.Z((x + k_2 * dt * 0.5), (y + l_2 * dt * 0.5), (z + m_2 * dt * 0.5), b)
+        l_3 = self.Y((x + k_2 * dt * 0.5), (y + l_2 * dt * 0.5),
+                     (z + m_2 * dt * 0.5), r)
+        m_3 = self.Z((x + k_2 * dt * 0.5), (y + l_2 * dt * 0.5),
+                     (z + m_2 * dt * 0.5), b)
 
         k_4 = self.X((x + k_3 * dt), (y + l_3 * dt), s)
         l_4 = self.Y((x + k_3 * dt), (y + l_3 * dt), (z + m_3 * dt), r)

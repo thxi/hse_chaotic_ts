@@ -26,21 +26,29 @@ def denormalize(arr: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
     return arr * (max_val - min_val) + min_val
 
 
-def diag_plot(X_train, X_test,
-              split, steps, noise_amp, n_trajectories,
-              forecast_sets, result, non_pred, rmse,
+def diag_plot(X_train,
+              X_test,
+              split,
+              steps,
+              noise_amp,
+              n_trajectories,
+              forecast_sets,
+              result,
+              non_pred,
+              rmse,
               filename=None):
     fig = plt.figure(figsize=[14, 10])
 
-    fig.suptitle(f'Lorenz; split={split}, steps={steps}, n_trajectories={n_trajectories}, var={noise_amp}', fontsize=16)
+    fig.suptitle(
+        f'Lorenz; split={split}, steps={steps}, n_trajectories={n_trajectories}, var={noise_amp}',
+        fontsize=16)
 
     # series plot
     plt.subplot(3, 1, 1)
     plt.plot(X_train, label='train')
     plt.plot(range(split, split + steps), X_test, label='test')
 
-    plt.vlines(split, 0, 1,
-               color='orange', linestyle='dashed')
+    plt.vlines(split, 0, 1, color='orange', linestyle='dashed')
     plt.title('Train/test split')
     plt.legend(loc='upper right')
 
@@ -53,8 +61,11 @@ def diag_plot(X_train, X_test,
     for i in range(n_trajectories):
         plt.plot(forecast_sets[:, i], c='orange', lw=0.5, zorder=0)
 
-    plt.scatter(range(result.size), result, label='predicted',
-                c='red', zorder=2)
+    plt.scatter(range(result.size),
+                result,
+                label='predicted',
+                c='red',
+                zorder=2)
 
     plt.title('Predicted trajectories (orange)')
     plt.legend(loc='upper right')
@@ -62,7 +73,10 @@ def diag_plot(X_train, X_test,
     # non-pred and rmse
     plt.subplot(3, 2, 5)
     plt.plot(non_pred)
-    plt.plot([0, steps], [0, steps], linestyle='dashed', color='blue', alpha=0.3)
+    plt.plot([0, steps], [0, steps],
+             linestyle='dashed',
+             color='blue',
+             alpha=0.3)
     plt.title(f"Non - Predictable Points")
     plt.xlim(1, steps)
     plt.ylim(1, steps)
