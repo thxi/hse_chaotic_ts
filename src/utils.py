@@ -26,10 +26,9 @@ def denormalize(arr: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
     return arr * (max_val - min_val) + min_val
 
 
-def diag_plot(X_train,
+def plot_trajectories(label,
+              X_train,
               X_test,
-              split,
-              steps,
               noise_amp,
               n_trajectories,
               forecast_sets,
@@ -39,22 +38,26 @@ def diag_plot(X_train,
               filename=None):
     fig = plt.figure(figsize=[14, 10])
 
+    train_size = X_train.shape[0]
+    test_size = X_test.shape[0]
+
     fig.suptitle(
-        f'Lorenz; split={split}, steps={steps}, n_trajectories={n_trajectories}, var={noise_amp}',
+        f'{label}; train size={train_size}, test size={test_size}, n_trajectories={n_trajectories}, var={noise_amp}',
         fontsize=16)
 
     # series plot
     plt.subplot(3, 1, 1)
     plt.plot(X_train, label='train')
-    plt.plot(range(split, split + steps), X_test, label='test')
+    plt.plot(range(train_size, train_size + test_size), X_test, label='test')
 
-    plt.vlines(split, 0, 1, color='orange', linestyle='dashed')
+    plt.title(label)
+    plt.vlines(train_size, 0, 1, color='orange', linestyle='dashed')
     plt.title('Train/test split')
     plt.legend(loc='upper right')
 
     # pred trajectories plot
     plt.subplot(3, 1, 2)
-    plt.plot(X_test, label='Lorenz', zorder=1)
+    plt.plot(X_test, label=label, zorder=1)
 
     plt.ylim(-0.1, 1.1)
 
@@ -73,16 +76,16 @@ def diag_plot(X_train,
     # non-pred and rmse
     plt.subplot(3, 2, 5)
     plt.plot(non_pred)
-    plt.plot([0, steps], [0, steps],
+    plt.plot([0, test_size], [0, test_size],
              linestyle='dashed',
              color='blue',
              alpha=0.3)
     plt.title(f"Non - Predictable Points")
-    plt.xlim(1, steps)
-    plt.ylim(1, steps)
+    plt.xlim(1, test_size)
+    plt.ylim(1, test_size)
 
     plt.subplot(3, 2, 6)
-    plt.xlim(1, steps)
+    plt.xlim(1, test_size)
     plt.plot(rmse)
     plt.title(f"RMSE")
 
