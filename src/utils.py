@@ -26,16 +26,23 @@ def denormalize(arr: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
     return arr * (max_val - min_val) + min_val
 
 
+def gen_sin_wave(train_periods, test_periods, points_per_period):
+    total_periods = (train_periods + test_periods)
+    x = np.linspace(0, 2 * np.pi * total_periods,
+                    total_periods * points_per_period)
+    return np.sin(x)
+
+
 def plot_trajectories(label,
-              X_train,
-              X_test,
-              noise_amp,
-              n_trajectories,
-              forecast_sets,
-              result,
-              non_pred,
-              rmse,
-              filename=None):
+                      X_train,
+                      X_test,
+                      noise_amp,
+                      n_trajectories,
+                      X_traj_pred,
+                      X_pred,
+                      non_pred,
+                      rmse,
+                      filename=None):
     fig = plt.figure(figsize=[14, 10])
 
     train_size = X_train.shape[0]
@@ -62,10 +69,10 @@ def plot_trajectories(label,
     plt.ylim(-0.1, 1.1)
 
     for i in range(n_trajectories):
-        plt.plot(forecast_sets[:, i], c='orange', lw=0.5, zorder=0)
+        plt.plot(X_traj_pred[:, i], c='orange', lw=0.5, zorder=0)
 
-    plt.scatter(range(result.size),
-                result,
+    plt.scatter(range(X_pred.size),
+                X_pred,
                 label='predicted',
                 c='red',
                 zorder=2)

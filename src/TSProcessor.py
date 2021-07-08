@@ -5,9 +5,11 @@ from joblib import Parallel, delayed
 from sklearn.cluster import DBSCAN
 from scipy.spatial.distance import cdist
 
+# TODO: fix docstrings
+
 
 class TSProcessor:
-    def __init__(self, points_in_template: int, max_template_spread: int):
+    def __init__(self, *, points_in_template: int, max_template_spread: int):
 
         # максимальное расстояние между соседними зубчиками шаблона
         self._max_template_spread = max_template_spread
@@ -61,86 +63,69 @@ class TSProcessor:
                 self._templates[i] +
                 np.arange(time_series.size - self._templates[i][-1])[:, None]])
 
-    def predict(self,
-                X_start: np.ndarray,
-                X_test: np.ndarray,
-                method: str,
-                eps: float = 0.01,
-                n_trajectories: int = 1,
-                priori_eps=0.01,
-                noise_amp=0.05,
-                dbs_eps=0.01,
-                dbs_min_samples=4):
-        # TODO: rewrite comment
-        assert (X_start.shape[0] >= self._max_template_spread *
-                (self._points_in_template - 1)), "X_start should be bigger"
-        # TODO: remove h_max
-        h_max = X_test.shape[0]
+    def heal(
+        self,
+        X_pred,
+    ):
+        raise NotImplementedError()
 
-        trajectories_prediction = None
-        unified_prediction = None
+    def predict_unified(
+        self,
+        X_traj_pred: np.ndarray,
+        method: str,
+        use_priori=False,
+        X_test: np.ndarray = None,
+        priori_eps: float = None,
+        # min number of trajectories to make
+        # a prediction at a point, otherwise the point is non predictable
+        min_trajectories: int = None,
+        max_err: float = 0.1,
+        alpha: float = 0.3,
+        dbs_eps=0.01,
+        dbs_min_samples=4,
+    ) -> np.ndarray:
+        """
+        get a unified prediction for each point
+        """
+        X_pred = None
+        res = {}
+        if use_priori:
+            assert X_test is not None
+            assert X_test.shape[0] == X_traj_pred.shape[0]
+            assert priori_eps is not None
 
-        if method == 'no-np':  # no non predictable
-            assert n_trajectories == 1, 'n_trajectories should be 1'
-            trajectories_prediction = self.pull(
-                X_start,
-                steps=h_max,
-                eps=eps,
-                n_trajectories=1,
-                noise_amp=noise_amp,
-                handle_first_type_non_pred=True,
-                n_jobs=-1)  # [steps x 1]
-            unified_prediction = trajectories_prediction[:, 0]  # [steps]
-        elif method == 'priori':
-            assert X_test is not None, 'X_test should be specified'
-            assert (~np.isnan(X_test)).all(), \
-                 'all X_test points should be non nan'
-            trajectories_prediction = self.pull(
-                X_start,
-                steps=h_max,
-                eps=eps,
-                n_trajectories=n_trajectories,
-                noise_amp=noise_amp,
-                handle_first_type_non_pred=True,
-                use_priori=True,
-                X_test=X_test,
-                n_jobs=-1,
-            )  # [steps x n_trajectories]
-            unified_prediction = self.cluster_sets(trajectories_prediction,
-                                                   dbs_eps,
-                                                   dbs_min_samples)  # [steps]
-
-            unified_prediction[np.abs(unified_prediction -
-                                      X_test) > eps] = np.nan
-
-        elif method == 'cluster':
-            trajectories_prediction = self.pull(
-                X_start,
-                steps=h_max,
-                eps=eps,
-                n_trajectories=n_trajectories,
-                noise_amp=noise_amp,
-                n_jobs=-1)  # [steps x n_trajectories]
-            unified_prediction = self.cluster_sets(trajectories_prediction,
-                                                   dbs_eps,
-                                                   dbs_min_samples)  # [steps]
+        if method == 'cluster':
+            raise NotImplementedError()
+            X_pred = self.cluster_sets(X_traj_pred, dbs_eps, dbs_min_samples)
+        elif method == 'quantile':
+            qs, traj_alive, X_pred = self.get_quantile_prediction(
+                X_traj_pred, min_trajectories, max_err, alpha)
+            res['qs'] = qs
+            res['traj_alive'] = traj_alive
         else:
             raise ValueError(f"unknown method '{method}'")
 
-        return trajectories_prediction, unified_prediction
+        if use_priori:
+            X_pred[np.abs(X_pred - X_test) > priori_eps] = np.nan
 
-    def pull(self,
-             X_start: np.ndarray,
-             steps: int,
-             eps: float,
-             n_trajectories: int,
-             noise_amp: float,
-             X_test: np.ndarray = None,
-             handle_first_type_non_pred=False,
-             use_priori=False,
-             priori_eps=0.1,
-             random_seed=1,
-             n_jobs: int = -1) -> np.ndarray:
+        res['X_pred'] = X_pred
+
+        return res
+
+    def predict_trajectories(
+        self,
+        X_start: np.ndarray,  # forecast after X_start
+        h_max: int,  # forecasting horizon
+        eps: float,  # eps for distance matrix
+        n_trajectories: int,
+        noise_amp: float,
+        use_priori=False,
+        X_test: np.ndarray = None,
+        priori_eps=0.1,
+        save_first_type_non_pred=False,  # save distance matrix
+        random_seed=1,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
         """
         Get trajectories' predictions from X_start to X_test
 
@@ -156,13 +141,16 @@ class TSProcessor:
         каждой из траекторий на этом шаге.
         """
 
+        assert (X_start.shape[0] >= self._max_template_spread *
+                (self._points_in_template - 1)), "X_start should be bigger"
+
         if use_priori:
             assert X_test is not None, 'X_test should be specified'
 
         # doign this to fill X_start
         original_size = X_start.shape[0]
-        X_start = np.resize(X_start, X_start.shape[0] + steps)
-        X_start[-steps:] = np.nan
+        X_start = np.resize(X_start, X_start.shape[0] + h_max)
+        X_start[-h_max:] = np.nan
 
         def get_trajectory_forecast(
             i: int,
@@ -174,8 +162,8 @@ class TSProcessor:
             np.random.seed(random_seed * i)
             X_start = X_start.copy()
             training_vectors = training_vectors.copy()
-            forecast_set = np.full((steps, ), np.nan)
-            for j in range(steps):
+            forecast_set = np.full((h_max, ), np.nan)
+            for j in range(h_max):
                 # тестовые вектора, которые будем сравнивать с тренировочными
                 last_vectors = (X_start[:original_size + j][np.cumsum(
                     -template_shapes[:, ::-1],
@@ -186,7 +174,7 @@ class TSProcessor:
 
                 # последние точки тренировочных векторов, оказавшихся в пределах eps
                 points = training_vectors[distance_matrix < eps][:, -1]
-                if handle_first_type_non_pred:
+                if save_first_type_non_pred:
                     # some trajectories can die (i.e. len(points)=0 which results in a nan)
                     if len(points) == 0:
                         # TODO: add quantile parameter
@@ -260,32 +248,49 @@ class TSProcessor:
 
         return X_pred
 
-    def get_quantile_prediction(self,
-                                forecast_sets: np.ndarray,
-                                max_err: float,
-                                alpha=0.05):
+    def get_quantile_prediction(
+        self,
+        X_traj_pred: np.ndarray,
+        min_trajectories,
+        max_err: float = 0.1,
+        alpha=0.3,
+    ):
         """
         Скластеризировать полученные в результате пулла множества прогнозных значений.
 
-        :param forecast_sets:
+        :param X_traj_pred:
         :param max_err: max forecasting error
         :param alpha:
         :return: Возвращает среднее предсказание в [alpha, 1-alpha] квантилях
         """
 
-        predictions = np.full(shape=[
-            forecast_sets.shape[0],
-        ],
-                              fill_value=np.nan)
-        for i in range(len(forecast_sets)):
-            q1, q2 = np.quantile(forecast_sets[i], q=[alpha, 1 - alpha])
-            print(i, q1, q2, q2 - q1)
-            if q2 - q1 <= max_err:
-                predictions[i] = np.mean(
-                    forecast_sets[i][(forecast_sets[i] > q1)
-                                     & (forecast_sets[i] < q2)])
+        X_pred = np.full(shape=[
+            X_traj_pred.shape[0],
+        ], fill_value=np.nan)
 
-        return predictions
+        qs = []
+        traj_alive = []
+        for i in range(len(X_traj_pred)):
+            traj_pred = X_traj_pred[i]
+            traj_pred = traj_pred[~np.isnan(traj_pred)]
+            traj_alive.append(len(traj_pred))
+            if len(traj_pred) == 0:
+                # no predictions for trajectories on i-th step
+                qs.append((np.nan, np.nan))
+                continue
+            q1, q2 = np.quantile(traj_pred, q=[alpha, 1 - alpha])
+            qs.append((q1, q2))
+            # print(i, q1, q2, q2 - q1, len(traj_pred))
+            if len(traj_pred) < min_trajectories:
+                # only a few trajectories left
+                continue
+            if q2 - q1 <= max_err:
+                X_pred[i] = np.mean(traj_pred[(traj_pred > q1)
+                                              & (traj_pred < q2)])
+
+        qs = np.array(qs)
+        traj_alive = np.array(traj_alive)
+        return qs, traj_alive, X_pred
 
 
 def _calc_distance_matrix(
@@ -309,10 +314,12 @@ def _calc_distance_matrix(
     return distances
 
 
-def _choose_trajectory_point(points_pool: np.ndarray,
-                             how: str,
-                             dbs_eps: float = 0.0,
-                             dbs_min_samples: int = 0) -> float:
+def _choose_trajectory_point(
+    points_pool: np.ndarray,
+    how: str,
+    dbs_eps: float = 0.0,
+    dbs_min_samples: int = 0,
+) -> float:
     """
     Выбрать финальный прогноз в данной точке из множества прогнозных значений.
 
