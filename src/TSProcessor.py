@@ -125,6 +125,7 @@ class TSProcessor:
         save_first_type_non_pred=False,  # save distance matrix
         random_seed=1,
         n_jobs: int = -1,
+        print_time=True,
     ) -> np.ndarray:
         """
         Get trajectories' predictions from X_start to X_test
@@ -158,7 +159,8 @@ class TSProcessor:
             training_vectors: np.ndarray,
             template_shapes: np.ndarray,
         ) -> np.ndarray:
-            print(f"{i} start")
+            if print_time:
+                print(f"{i} start")
             np.random.seed(random_seed * i)
             X_start = X_start.copy()
             training_vectors = training_vectors.copy()
@@ -195,7 +197,8 @@ class TSProcessor:
                     forecast_set[j] = forecast_point
                     X_start[original_size + j] = forecast_point
 
-            print(f"{i} end")
+            if print_time:
+                print(f"{i} end")
             return forecast_set
 
         start = time.time()
@@ -203,7 +206,8 @@ class TSProcessor:
             i, X_start, self._training_vectors, self._template_shapes)
                                               for i in range(n_trajectories))
         end = time.time()
-        print('{:.2f}s'.format(end - start))
+        if print_time:
+            print('{:.2f}s'.format(end - start))
 
         # сеты прогнозных значений для каждой точки, в которой будем делать прогноз
         # размер: steps x n_trajectories
