@@ -100,3 +100,41 @@ def plot_trajectories(label,
 
     if filename is not None:
         fig.savefig(filename)
+
+
+def plot_runs(runs, h_max, filename=None):
+    fig = plt.figure(figsize=(20, 10))
+
+    # non-pred and rmse
+    plt.subplot(1, 2, 1)
+
+    colors = ['orange', 'blue', 'green', 'cyan']
+    for color, label in zip(colors, runs.keys()):
+        plt.plot(range(1, h_max + 1),
+                 runs[label]['non_pred'],
+                 color=color,
+                 label=label)
+
+    plt.title(f"Non - Predictable Points")
+    plt.xlim(1, h_max)
+    plt.ylim(0, 100)
+    plt.xlabel('Forecasting horizon')
+    plt.ylabel('Percentage of non-predictable')
+    plt.legend(loc='upper left')
+
+    plt.subplot(1, 2, 2)
+
+    for color, label in zip(colors, runs.keys()):
+        plt.plot(range(1, h_max + 1),
+                 runs[label]['rmse'],
+                 color=color,
+                 label=label)
+
+    plt.title(f"RMSE")
+    plt.xlim(1, h_max)
+    plt.xlabel('Forecasting horizon')
+
+    fig.tight_layout()
+
+    if filename is not None:
+        fig.savefig(filename)

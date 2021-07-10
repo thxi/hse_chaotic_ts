@@ -3,7 +3,6 @@ import time
 import numpy as np
 from joblib import Parallel, delayed
 from sklearn.cluster import DBSCAN
-from scipy.spatial.distance import cdist
 
 # TODO: fix docstrings
 
@@ -78,6 +77,7 @@ class TSProcessor:
         priori_eps: float = None,
         # min number of trajectories to make
         # a prediction at a point, otherwise the point is non predictable
+        dbs_min_trajectories: int = None,
         min_trajectories: int = None,
         max_err: float = 0.1,
         alpha: float = 0.3,
@@ -95,8 +95,10 @@ class TSProcessor:
             assert priori_eps is not None
 
         if method == 'cluster':
-            raise NotImplementedError()
-            X_pred = self.cluster_sets(X_traj_pred, dbs_eps, dbs_min_samples)
+            traj_alive, cluster_centers, X_pred = self.cluster_sets(
+                X_traj_pred, dbs_min_trajectories, dbs_eps, dbs_min_samples)
+            res['traj_alive'] = traj_alive
+            res['cluster_centers'] = cluster_centers
         elif method == 'quantile':
             qs, traj_alive, X_pred = self.get_quantile_prediction(
                 X_traj_pred, min_trajectories, max_err, alpha)
@@ -215,12 +217,17 @@ class TSProcessor:
 
         return X_traj_pred
 
-    def cluster_sets(self, X_traj_pred: np.ndarray, dbs_eps: float,
-                     dbs_min_samples: int):
+    def cluster_sets(
+        self,
+        X_traj_pred: np.ndarray,
+        min_trajectories,
+        dbs_eps: float,
+        dbs_min_samples: int,
+    ):
         """
         Скластеризировать полученные в результате пулла множества прогнозных значений.
 
-        :param forecast_sets:
+        :param X_traj_pred:
         :param dbs_eps:
         :param dbs_min_samples:
         :return: Возвращает центр самого большого кластера на каждом шаге.
@@ -231,26 +238,39 @@ class TSProcessor:
         ], fill_value=np.nan)
         dbs = DBSCAN(eps=dbs_eps, min_samples=dbs_min_samples)
 
+        cluster_centers = []
+        traj_alive = []
         for i in range(len(X_traj_pred)):
-            curr_set = X_traj_pred[i]
-            curr_set = curr_set[
-                ~np.isnan(curr_set)]  # filter nans for trajectories
-            if len(curr_set) == 0:  # only nans left
+            traj_pred = X_traj_pred[i]
+            traj_pred = traj_pred[
+                ~np.isnan(traj_pred)]  # filter nans for trajectories
+            traj_alive.append(len(traj_pred))
+            if len(traj_pred) == 0:  # only nans left
                 continue
 
-            dbs.fit(curr_set.reshape(-1, 1))
+            dbs.fit(traj_pred.reshape(-1, 1))
 
             # TODO: handle case when there are 2 big clusters
             cluster_labels, cluster_sizes = np.unique(
                 dbs.labels_[dbs.labels_ > -1], return_counts=True)
+            # print(i, cluster_sizes)
+
+            step_preds = []
+            for label in cluster_labels:
+                pred = traj_pred[label == dbs.labels_].mean()
+                step_preds.append(pred)
+            cluster_centers.append(step_preds)
 
             if cluster_labels.size > 0:
-                biggest_cluster_center = curr_set[
-                    dbs.labels_ == cluster_labels[
-                        cluster_sizes.argmax()]].mean()
+                max_cluster_size = cluster_sizes.max()
+                max_cluster_label = cluster_sizes.argmax()
+                if max_cluster_size < min_trajectories:
+                    continue
+                biggest_cluster_center = traj_pred[
+                    dbs.labels_ == cluster_labels[max_cluster_label]].mean()
                 X_pred[i] = biggest_cluster_center
 
-        return X_pred
+        return traj_alive, cluster_centers, X_pred
 
     def get_quantile_prediction(
         self,
