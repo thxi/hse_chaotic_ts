@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+import cupy as cp
 from joblib import Parallel, delayed
 from sklearn.cluster import DBSCAN
 
@@ -18,12 +19,12 @@ class TSProcessor:
             points_in_template - 1)  # сколько у нас всего шаблонов
         self.z_dim: int = points_in_template  # сколько зубчиков в каждом шаблоне
 
-        # сами шаблоны
-        templates = (np.repeat(0, self.x_dim).reshape(-1, 1), )
+        # сами шабл)оны
+        templates = (cp.zeros(shape=(self.x_dim, 1), dtype=int), )
         # код, который заполняет шаблоны нужными значениями
         for i in range(1, points_in_template):
             col = (
-                np.repeat(np.arange(1, max_template_spread + 1, dtype=int),
+                cp.repeat(cp.arange(1, max_template_spread + 1, dtype=int),
                           max_template_spread**(points_in_template -
                                                 (i + 1))) +
                 templates[i - 1][::max_template_spread**(points_in_template -
@@ -31,17 +32,17 @@ class TSProcessor:
 
             templates += (col, )
 
-        self._templates: np.ndarray = np.hstack(templates)
+        self._templates: cp.ndarray = cp.hstack(templates)
 
         # формы шаблонов, т.е. [1, 1, 1], [1, 1, 2] и т.д.
-        self._template_shapes: np.ndarray = self._templates[:,1:] \
+        self._template_shapes: cp.ndarray = self._templates[:,1:] \
             - self._templates[:, :-1]  # k1, k2, ...
 
-    def fit(self, time_series: np.ndarray) -> None:
+    def fit(self, time_series: cp.ndarray) -> None:
         """ Fill training vectors from time_series """
 
-        # self._time_series = time_series
-        self.y_dim = time_series.size - self._templates[0][-1]
+        self.y_dim = time_series.shape[0] - int(
+            cp.asnumpy(self._templates[0][-1]))
 
         # создать обучающее множество
         # Его можно представить как куб, где по оси X идут шаблоны, по оси Y - вектора,
@@ -49,18 +50,20 @@ class TSProcessor:
         # Чтобы получить точку A вектора B шаблона C - делаем self._training_vectors[C, B, A].
         # Вектора идут в хронологическом порядке "протаскивания" конкретного шаблона по ряду,
         # шаблоны - по порядку от [1, 1, ... , 1], [1, 1, ..., 2] до [n, n, ..., n].
-        self._training_vectors: np.ndarray = \
-            np.full(shape=(self.x_dim, self.y_dim, self.z_dim), fill_value=np.inf, dtype=float)
+        self._training_vectors: cp.ndarray = \
+            cp.full(shape=(self.x_dim, self.y_dim, self.z_dim), fill_value=cp.inf, dtype=float)
 
         # тащим шаблон по ряду
         for i in range(self.x_dim):
             template_data = (time_series[
                 self._templates[i] +
-                np.arange(time_series.size - self._templates[i][-1])[:, None]])
+                cp.arange(time_series.size - self._templates[i][-1])[:, None]])
 
             self._training_vectors[i, :template_data.shape[0]] = (time_series[
                 self._templates[i] +
-                np.arange(time_series.size - self._templates[i][-1])[:, None]])
+                cp.arange(time_series.size - self._templates[i][-1])[:, None]])
+        self._last_vectors = cp.cumsum(-self._template_shapes[:, ::-1],
+                                       axis=1)[:, ::-1]
 
     def heal(
         self,
@@ -83,7 +86,7 @@ class TSProcessor:
         alpha: float = 0.3,
         dbs_eps=0.01,
         dbs_min_samples=4,
-    ) -> np.ndarray:
+    ) -> cp.ndarray:
         """
         get a unified prediction for each point
         """
@@ -116,13 +119,13 @@ class TSProcessor:
 
     def predict_trajectories(
         self,
-        X_start: np.ndarray,  # forecast after X_start
+        X_start: cp.ndarray,  # forecast after X_start
         h_max: int,  # forecasting horizon
         eps: float,  # eps for distance matrix
         n_trajectories: int,
         noise_amp: float,
         use_priori=False,
-        X_test: np.ndarray = None,
+        X_test: cp.ndarray = None,
         priori_eps=0.1,
         save_first_type_non_pred=False,  # save distance matrix
         random_seed=1,
@@ -152,70 +155,33 @@ class TSProcessor:
 
         # doign this to fill X_start
         original_size = X_start.shape[0]
-        X_start = np.resize(X_start, X_start.shape[0] + h_max)
-        X_start[-h_max:] = np.nan
+        X_start = cp.resize(X_start, X_start.shape[0] + h_max)
+        X_start[-h_max:] = cp.nan
 
-        def get_trajectory_forecast(
-            i: int,
-            X_start: np.ndarray,
-            training_vectors: np.ndarray,
-            template_shapes: np.ndarray,
-        ) -> np.ndarray:
-            if print_time:
-                print(f"{i} start")
-            np.random.seed(random_seed * i)
-            X_start = X_start.copy()
-            training_vectors = training_vectors.copy()
-            forecast_set = np.full((h_max, ), np.nan)
-            for j in range(h_max):
-                # тестовые вектора, которые будем сравнивать с тренировочными
-                last_vectors = (X_start[:original_size + j][np.cumsum(
-                    -template_shapes[:, ::-1],
-                    axis=1)[:, ::-1]])  # invert templates
+        X_start = cp.repeat(X_start[cp.newaxis, :], n_trajectories, axis=0)
+        training_for_dist = cp.repeat(self._training_vectors[cp.newaxis, :, :,
+                                                             -1],
+                                      n_trajectories,
+                                      axis=0)
+        noise = cp.random.normal(0, noise_amp, size=(n_trajectories, h_max))
+        for j in range(h_max):
+            last_vectors = (X_start[:, :original_size + j][:,
+                                                           self._last_vectors])
+            dist = _calc_distance_matrix(self._training_vectors, last_vectors)
 
-                distance_matrix = _calc_distance_matrix(
-                    training_vectors, last_vectors)
-
-                # последние точки тренировочных векторов, оказавшихся в пределах eps
-                points = training_vectors[distance_matrix < eps][:, -1]
-                if save_first_type_non_pred:
-                    # some trajectories can die (i.e. len(points)=0 which results in a nan)
-                    if len(points) == 0:
-                        # TODO: add quantile parameter
-                        new_eps = np.quantile(distance_matrix, q=0.01)
-                        points = training_vectors[
-                            distance_matrix < new_eps][:, -1]
-
-                # теперь нужно выбрать финальное прогнозное значение из возможных
-                # TODO: add parameter to select the method
-                forecast_point = _choose_trajectory_point(points, 'mean') \
-                    + np.random.normal(0, noise_amp)
-
-                if use_priori:
-                    if abs(forecast_point - X_test[j]) < priori_eps:
-                        forecast_set[j] = forecast_point
-                        X_start[original_size + j] = forecast_point
-                else:
-                    forecast_set[j] = forecast_point
-                    X_start[original_size + j] = forecast_point
-
-            if print_time:
-                print(f"{i} end")
-            return forecast_set
-
-        start = time.time()
-        X_traj_pred = Parallel(n_jobs=n_jobs)(delayed(get_trajectory_forecast)(
-            i, X_start, self._training_vectors, self._template_shapes)
-                                              for i in range(n_trajectories))
-        end = time.time()
-        if print_time:
-            print('{:.2f}s'.format(end - start))
+            # see https://stackoverflow.com/a/29046530
+            predictions = cp.nanmean(cp.where(dist < eps, training_for_dist,
+                                              cp.nan).reshape(
+                                                  n_trajectories, -1),
+                                     axis=1) + noise[:, j]
+            X_start[:, original_size + j] = predictions
 
         # сеты прогнозных значений для каждой точки, в которой будем делать прогноз
         # размер: steps x n_trajectories
-        X_traj_pred = np.array(X_traj_pred).T
-
-        return X_traj_pred
+        X_start = X_start[:, original_size:]
+        X_start = X_start.T
+        # X_start = cp.asnumpy(X_start)
+        return X_start
 
     def cluster_sets(
         self,
@@ -290,7 +256,7 @@ class TSProcessor:
 
         X_pred = np.full(shape=[
             X_traj_pred.shape[0],
-        ], fill_value=np.nan)
+        ], fill_value=cp.nan)
 
         qs = []
         traj_alive = []
@@ -318,67 +284,20 @@ class TSProcessor:
 
 
 def _calc_distance_matrix(
-    training_vectors: np.ndarray,
-    test_vectors: np.ndarray,
-) -> np.ndarray:
+    training_vectors: cp.ndarray,
+    test_vectors: cp.ndarray,
+) -> cp.ndarray:
     """
     calculate the distance matrix between training_vectors and test_vectors
     """
 
     # drop last point from training vectors
-    vectors_in_template = training_vectors.shape[-2]
     training_vectors = training_vectors[:, :, :-1]
+    training_vectors = training_vectors[cp.newaxis, :, :, :]
 
     # reshaping test_vectors to efficiently calculate the distances
-    test_vectors = test_vectors[:, np.newaxis, :]
-    test_vectors = np.repeat(test_vectors, vectors_in_template, axis=1)
+    test_vectors = test_vectors[:, :, cp.newaxis, :]
 
-    distances = np.sqrt(((training_vectors - test_vectors)**2).sum(axis=-1))
+    distances = cp.sqrt(((training_vectors - test_vectors)**2).sum(axis=-1))
 
     return distances
-
-
-def _choose_trajectory_point(
-    points_pool: np.ndarray,
-    how: str,
-    dbs_eps: float = 0.0,
-    dbs_min_samples: int = 0,
-) -> float:
-    """
-    Выбрать финальный прогноз в данной точке из множества прогнозных значений.
-
-    "How" варианты:
-        "mean" = "mean"
-        "mf"   = "most frequent"
-        "cl"   = "cluster", нужны dbs_eps и dbs_min_samples
-    """
-    result = None
-    if points_pool.size == 0:
-        result = np.nan
-    else:
-        if how == 'mean':
-            result = float(points_pool.mean())
-
-        elif how == 'mf':
-            raise Exception("Not implemented")
-            # points, counts = np.unique(points_pool, return_counts=True)
-            # result = points[counts.argmax()]
-
-        elif how == 'cl':
-            raise Exception("Not implemented")
-            # dbs = DBSCAN(eps=dbs_eps, min_samples=dbs_min_samples)
-            # dbs.fit(points_pool.reshape(-1, 1))
-
-            # cluster_labels, cluster_sizes = np.unique(
-            #     dbs.labels_[dbs.labels_ > -1], return_counts=True)
-
-            # if (cluster_labels.size > 0 and np.count_nonzero(
-            #     ((cluster_sizes / cluster_sizes.max()).round(2) > 0.8)) == 1):
-            #     biggest_cluster_center = points_pool[
-            #         dbs.labels_ == cluster_labels[
-            #             cluster_sizes.argmax()]].mean()
-            #     result = biggest_cluster_center
-            # else:
-            #     result = np.nan
-
-    return result
