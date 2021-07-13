@@ -91,6 +91,7 @@ class TSProcessor:
         eps: float,  # eps for distance matrix
         n_trajectories: int,
         noise_amp: float,
+        X_pred: Union[cp.ndarray, np.ndarray] = None,
         use_priori=False,
         X_test: Union[cp.ndarray, np.ndarray] = None,
         priori_eps=0.1,
@@ -116,9 +117,10 @@ class TSProcessor:
         if xp.__name__ == 'numpy':
             return self._predict_trajectories_cpu(X_start, h_max, eps,
                                                   n_trajectories, noise_amp,
-                                                  use_priori, X_test,
+                                                  X_pred, use_priori, X_test,
                                                   priori_eps, random_seed,
                                                   n_jobs, print_time)
+        assert X_pred is None, "X_pred is not implemented for gpu"
         return self._predict_trajectories_gpu(X_start, h_max, eps,
                                               n_trajectories, noise_amp,
                                               use_priori, X_test, priori_eps)
@@ -182,6 +184,7 @@ class TSProcessor:
         eps: float,  # eps for distance matrix
         n_trajectories: int,
         noise_amp: float,
+        X_pred: np.ndarray = None,
         use_priori=False,
         X_test: np.ndarray = None,
         priori_eps=0.1,
@@ -206,10 +209,17 @@ class TSProcessor:
         ) -> np.ndarray:
             np.random.seed(random_seed * i)
             X_start = X_start.copy()
-            forecast_set = np.full((h_max, ), np.nan)
             for j in range(h_max):
                 # тестовые вектора, которые будем сравнивать с тренировочными
+                if X_pred is not None and not np.isnan(X_pred[j]):
+                    X_start[original_size + j] = X_pred[j]
+                    continue
+
                 test_vectors = X_start[:original_size + j][self._last_vectors]
+
+                # TODO: might optimize
+                # if np.mean(np.isnan(last_vectors).any(axis=1)) == 1:
+                #     continue
 
                 distance_matrix = _calc_distance_matrix_cpu(
                     self._training_vectors, test_vectors)
@@ -224,12 +234,10 @@ class TSProcessor:
 
                 if use_priori:
                     if np.abs(forecast_point - X_test[j]) < priori_eps:
-                        forecast_set[j] = forecast_point
                         X_start[original_size + j] = forecast_point
                 else:
-                    forecast_set[j] = forecast_point
                     X_start[original_size + j] = forecast_point
-            return forecast_set
+            return X_start[original_size:]
 
         start = timer()
         X_traj_pred = Parallel(n_jobs=n_jobs, backend="threading")(
