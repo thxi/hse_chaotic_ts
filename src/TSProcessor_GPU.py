@@ -94,72 +94,23 @@ class TSProcessor:
 
     def heal(
         self,
-        X_pred,
+        X_start: torch.Tensor,
+        h_max: int,  # forecasting horizon
+        eps: float,  # eps for distance matrix
+        n_trajectories: int,
+        noise_amp: float,
+        X_pred: torch.Tensor = None,
+        use_priori=False,
+        X_test: torch.Tensor = None,
+        priori_eps=0.1,
+        random_seed=1,
     ):
-        raise NotImplementedError()
-
-    def predict_trajectories(
-        self,
-        X_start: Union[torch.Tensor, np.ndarray],  # forecast after X_start
-        h_max: int,  # forecasting horizon
-        eps: float,  # eps for distance matrix
-        n_trajectories: int,
-        noise_amp: float,
-        X_pred: torch.Tensor = None,
-        use_priori=False,
-        X_test: torch.Tensor = None,
-        priori_eps=0.1,
-        random_seed=1,
-        n_jobs: int = -1,
-        print_time=False,
-    ) -> np.ndarray:
-        """
-        Get trajectories' predictions from X_start to X_test
-
-        :param steps: На сколько шагов прогнозируем.
-        :param eps: Минимальное Евклидово расстояние от соответствующего шаблона, в пределах которого должны находиться
-            вектора наблюдений, чтобы считаться "достаточно похожими".
-        :param n_trajectories: Сколько траекторий использовать.
-            Чем больше, тем дольше время работы и потенциально точнее результат.
-        :param noise_amp: Максимальная амплитуда шума, используемая при расчете траекторий.
-        :param n_jobs: максимальное количество процессов для вычисления каждой траектории
-        :param prev_result: предыдущие предсказания
-        :return: Возвращает матрицу размером steps x n_trajectories, где по горизонтали идут шаги, а по вертикали - прогнозы
-        каждой из траекторий на этом шаге.
-        """
-        if not isinstance(X_start, torch.Tensor):
-            return self._predict_trajectories_cpu(X_start, h_max, eps,
-                                                  n_trajectories, noise_amp,
-                                                  X_pred, use_priori, X_test,
-                                                  priori_eps, random_seed,
-                                                  n_jobs, print_time)
-        return self._predict_trajectories_gpu(X_start, h_max, eps,
-                                              n_trajectories, noise_amp,
-                                              use_priori, X_test, priori_eps,
-                                              random_seed)
-
-    def _predict_trajectories_gpu(
-        self,
-        X_start: torch.Tensor,  # forecast after X_start
-        h_max: int,  # forecasting horizon
-        eps: float,  # eps for distance matrix
-        n_trajectories: int,
-        noise_amp: float,
-        use_priori=False,
-        X_test: torch.Tensor = None,
-        priori_eps=0.1,
-        X_pred: torch.Tensor = None,
-        random_seed=1,
-    ) -> torch.Tensor:
-
         assert (X_start.shape[0] == self._max_template_spread *
                 (self._points_in_template - 1)), "X_start should be bigger"
 
         if use_priori:
             assert X_test is not None, 'X_test should be specified'
 
-        # TODO: move other to device
-        # X_start = X_start.to(self._device)
         # doign this to fill X_start
         original_size = X_start.shape[0]
         X_start = X_start.detach().clone()
@@ -206,21 +157,34 @@ class TSProcessor:
         X_start = X_start.T
         return X_start
 
-    def _predict_trajectories_cpu(
+    def predict_trajectories(
         self,
-        X_start: np.ndarray,  # forecast after X_start
+        X_start: torch.Tensor,  # forecast after X_start
         h_max: int,  # forecasting horizon
         eps: float,  # eps for distance matrix
         n_trajectories: int,
         noise_amp: float,
-        X_pred: np.ndarray = None,
+        X_pred: torch.Tensor = None,
         use_priori=False,
-        X_test: np.ndarray = None,
+        X_test: torch.Tensor = None,
         priori_eps=0.1,
         random_seed=1,
-        n_jobs: int = -1,
-        print_time=False,
     ) -> np.ndarray:
+        """
+        Get trajectories' predictions from X_start to X_test
+
+        :param steps: На сколько шагов прогнозируем.
+        :param eps: Минимальное Евклидово расстояние от соответствующего шаблона, в пределах которого должны находиться
+            вектора наблюдений, чтобы считаться "достаточно похожими".
+        :param n_trajectories: Сколько траекторий использовать.
+            Чем больше, тем дольше время работы и потенциально точнее результат.
+        :param noise_amp: Максимальная амплитуда шума, используемая при расчете траекторий.
+        :param n_jobs: максимальное количество процессов для вычисления каждой траектории
+        :param prev_result: предыдущие предсказания
+        :return: Возвращает матрицу размером steps x n_trajectories, где по горизонтали идут шаги, а по вертикали - прогнозы
+        каждой из траекторий на этом шаге.
+        """
+
         assert (X_start.shape[0] == self._max_template_spread *
                 (self._points_in_template - 1)), "X_start should be bigger"
 
@@ -229,58 +193,49 @@ class TSProcessor:
 
         # doign this to fill X_start
         original_size = X_start.shape[0]
-        X_start = np.resize(X_start, X_start.shape[0] + h_max)
+        X_start = X_start.detach().clone()
+        X_start = X_start.resize_(X_start.shape[0] + h_max)
         X_start[-h_max:] = np.nan
 
-        def get_trajectory_forecast(
-            i: int,
-            X_start: np.ndarray,
-        ) -> np.ndarray:
-            np.random.seed(random_seed * i)
-            X_start = X_start.copy()
-            for j in range(h_max):
-                # тестовые вектора, которые будем сравнивать с тренировочными
-                if X_pred is not None and not np.isnan(X_pred[j]):
-                    X_start[original_size + j] = X_pred[j]
-                    continue
+        X_start = torch.repeat_interleave(X_start[np.newaxis, :],
+                                          n_trajectories,
+                                          dim=0)
 
-                test_vectors = X_start[:original_size + j][self._last_vectors]
+        training_for_dist = torch.repeat_interleave(
+            self._training_vectors[None, :, :, -1], n_trajectories, dim=0)
 
-                # TODO: might optimize
-                # if np.mean(np.isnan(last_vectors).any(axis=1)) == 1:
-                #     continue
+        torch.manual_seed(random_seed)
+        noise = torch.normal(0, noise_amp,
+                             size=(n_trajectories, h_max)).to(self._device)
 
-                distance_matrix = _calc_distance_matrix_cpu(
-                    self._training_vectors, test_vectors)
+        # a dirty hack to use torch.where with nan
+        # TODO: make prettier
+        torchnan = torch.tensor([np.nan]).type(X_start.dtype).to(self._device)
 
-                # последние точки тренировочных векторов, оказавшихся в пределах eps
-                points = self._training_vectors[distance_matrix < eps][:, -1]
-                if np.all(points == np.nan):
-                    continue
+        for i in range(h_max):
+            if X_pred is not None and not np.isnan(X_pred[i]):
+                X_start[:, original_size + i] = X_pred[i]
+                continue
+            test_vectors = X_start[:, :original_size + i][:,
+                                                          self._last_vectors]
+            dist = _calc_distance_matrix_gpu(self._training_vectors,
+                                             test_vectors)
 
-                # теперь нужно выбрать финальное прогнозное значение из возможных
-                forecast_point = points.mean() + np.random.normal(0, noise_amp)
-
-                if use_priori:
-                    if np.abs(forecast_point - X_test[j]) < priori_eps:
-                        X_start[original_size + j] = forecast_point
-                else:
-                    X_start[original_size + j] = forecast_point
-            return X_start[original_size:]
-
-        start = timer()
-        X_traj_pred = Parallel(n_jobs=n_jobs, backend="threading")(
-            delayed(get_trajectory_forecast)(i, X_start)
-            for i in range(n_trajectories))
-        end = timer()
-        if print_time:
-            print(timedelta(seconds=end - start))
+            # see https://stackoverflow.com/a/29046530
+            wh = torch.where(dist < eps, training_for_dist,
+                             torchnan).reshape(n_trajectories, -1)
+            predictions = nanmean(wh, inplace=True, dim=1) + noise[:, i]
+            if use_priori:
+                predictions = torch.where(
+                    torch.abs(predictions - X_test[i]) < priori_eps,
+                    predictions, torchnan)
+            X_start[:, original_size + i] = predictions
 
         # сеты прогнозных значений для каждой точки, в которой будем делать прогноз
         # размер: steps x n_trajectories
-        X_traj_pred = np.array(X_traj_pred).T
-
-        return X_traj_pred
+        X_start = X_start[:, original_size:]
+        X_start = X_start.T
+        return X_start
 
     def predict_unified(
         self,
@@ -289,14 +244,14 @@ class TSProcessor:
         use_priori=False,
         X_test: np.ndarray = None,
         priori_eps: float = None,
-        # min number of trajectories to make
-        # a prediction at a point, otherwise the point is non predictable
-        dbs_min_trajectories: int = None,
+        # quantile params
         min_trajectories: int = None,
-        max_err: float = 0.1,
-        alpha: float = 0.3,
-        dbs_eps=0.01,
-        dbs_min_samples=4,
+        max_err: float = None,
+        alpha: float = None,
+        # cluster params
+        dbs_min_trajectories: int = None,
+        dbs_eps: float = None,
+        dbs_min_samples: int = None,
     ) -> np.ndarray:
         """
         get a unified prediction for each point
@@ -389,8 +344,8 @@ class TSProcessor:
         self,
         X_traj_pred: np.ndarray,
         min_trajectories,
-        max_err: float = 0.1,
-        alpha=0.3,
+        max_err: float,
+        alpha,
     ) -> np.ndarray:
         """
         Скластеризировать полученные в результате пулла множества прогнозных значений.
@@ -410,20 +365,21 @@ class TSProcessor:
         for i in range(len(X_traj_pred)):
             traj_pred = X_traj_pred[i]
             traj_pred = traj_pred[~np.isnan(traj_pred)]
-            traj_alive.append(len(traj_pred))
             if len(traj_pred) == 0:
                 # no predictions for trajectories on i-th step
+                traj_alive.append(0)
                 qs.append((np.nan, np.nan))
                 continue
             q1, q2 = np.quantile(traj_pred, q=[alpha, 1 - alpha])
             qs.append((q1, q2))
             # print(i, q1, q2, q2 - q1, len(traj_pred))
+            traj_pred = traj_pred[(traj_pred > q1) & (traj_pred < q2)]
+            traj_alive.append(len(traj_pred))
             if len(traj_pred) < min_trajectories:
                 # only a few trajectories left
                 continue
             if q2 - q1 <= max_err:
-                X_pred[i] = np.mean(traj_pred[(traj_pred > q1)
-                                              & (traj_pred < q2)])
+                X_pred[i] = np.mean(traj_pred)
 
         qs = np.array(qs)
         traj_alive = np.array(traj_alive)
@@ -447,24 +403,5 @@ def _calc_distance_matrix_gpu(
     test_vectors = test_vectors[:, :, np.newaxis, :]
 
     distances = torch.sqrt(((training_vectors - test_vectors)**2).sum(axis=-1))
-
-    return distances
-
-
-def _calc_distance_matrix_cpu(
-    training_vectors: np.ndarray,
-    test_vectors: np.ndarray,
-) -> np.ndarray:
-    """
-    calculate the distance matrix between training_vectors and test_vectors
-    """
-
-    # drop last point from training vectors
-    training_vectors = training_vectors[:, :, :-1]
-
-    # reshaping test_vectors to efficiently calculate the distances
-    test_vectors = test_vectors[:, np.newaxis, :]
-
-    distances = np.sqrt(((training_vectors - test_vectors)**2).sum(axis=-1))
 
     return distances

@@ -43,7 +43,7 @@ def plot_trajectories(label,
                       non_pred,
                       rmse,
                       filename=None):
-    fig = plt.figure(figsize=[14, 10])
+    fig = plt.figure(figsize=[14, 7])
 
     train_size = X_train.shape[0]
     test_size = X_test.shape[0]
@@ -53,7 +53,7 @@ def plot_trajectories(label,
         fontsize=16)
 
     # series plot
-    plt.subplot(3, 1, 1)
+    plt.subplot(2, 1, 1)
     plt.plot(X_train, label='train')
     plt.plot(range(train_size, train_size + test_size), X_test, label='test')
 
@@ -63,7 +63,7 @@ def plot_trajectories(label,
     plt.legend(loc='upper right')
 
     # pred trajectories plot
-    plt.subplot(3, 1, 2)
+    plt.subplot(2, 1, 2)
     plt.plot(X_test, label=label, zorder=1)
 
     plt.ylim(-0.1, 1.1)
@@ -79,22 +79,6 @@ def plot_trajectories(label,
 
     plt.title('Predicted trajectories (orange)')
     plt.legend(loc='upper right')
-
-    # non-pred and rmse
-    plt.subplot(3, 2, 5)
-    plt.plot(non_pred)
-    plt.plot([0, test_size], [0, test_size],
-             linestyle='dashed',
-             color='blue',
-             alpha=0.3)
-    plt.title(f"Non - Predictable Points")
-    plt.xlim(1, test_size)
-    plt.ylim(1, test_size)
-
-    plt.subplot(3, 2, 6)
-    plt.xlim(1, test_size)
-    plt.plot(rmse)
-    plt.title(f"RMSE")
 
     fig.tight_layout()
 
