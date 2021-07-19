@@ -90,7 +90,7 @@ def plot_runs(runs, h_max, filename=None):
     # non-pred and rmse
     plt.subplot(1, 2, 1)
 
-    colors = ['orange', 'blue', 'green', 'cyan', 'purple']
+    colors = ['orange', 'blue', 'green', 'cyan', 'purple', 'red']
     for color, label in zip(colors, runs.keys()):
         plt.plot(range(1, h_max + 1),
                  runs[label]['non_pred'],

@@ -102,6 +102,10 @@ class TSProcessor:
         X_start = X_start.resize_(X_start.shape[0] + h_max)
         X_start[-h_max:] = X_pred
 
+        delta = self._max_template_spread * (self._points_in_template - 1)
+        X_start = X_start.resize_(X_start.shape[0] + delta)
+        X_start[-delta:] = np.nan
+
         X_start = torch.repeat_interleave(X_start[np.newaxis, :],
                                           n_trajectories,
                                           dim=0)
@@ -112,15 +116,13 @@ class TSProcessor:
         torch.manual_seed(random_seed)
         noise = torch.normal(0, noise_amp, size=(n_trajectories, h_max))
 
-        delta = self._max_template_spread * (self._points_in_template - 1)
-
         # a dirty hack to use torch.where with nan
         # TODO: make prettier
         torchnan = torch.tensor([np.nan]).type(X_start.dtype).to(self._device)
 
-        for i in tqdm(range(h_max)):
-            # if not torch.isnan(X_pred[i]).item():
-            #     continue
+        for i in range(h_max):
+            if not torch.isnan(X_pred[i]).item():
+                continue
             predictions_mat = torch.full(size=(n_trajectories,
                                                self._points_in_template),
                                          fill_value=np.nan,
@@ -138,17 +140,22 @@ class TSProcessor:
                     ],
                                                   axis=1) - delta
                 else:
-                    last_vectors = self._last_vectors
+                    last_vectors = self._last_vectors - delta
+                # print(point_in_template, last_vectors)
 
+                training_vectors = torch.cat([
+                    self._training_vectors[:, :, :point_in_template],
+                    self._training_vectors[:, :, point_in_template + 1:]
+                ],
+                                             dim=2)
                 test_vectors = X_start[:, :original_size + i +
                                        delta][:, last_vectors]
 
-                dist = _calc_distance_matrix_gpu(self._training_vectors,
-                                                 test_vectors,
-                                                 point_in_template)
+                dist = _calc_distance_matrix_gpu(training_vectors,
+                                                 test_vectors)
 
                 training_for_dist = torch.repeat_interleave(
-                    self._training_vectors[None, :, :, -1],
+                    self._training_vectors[None, :, :, point_in_template],
                     n_trajectories,
                     dim=0)
                 wh = torch.where(dist < eps, training_for_dist,
@@ -159,17 +166,14 @@ class TSProcessor:
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            # print(X_pred[i], predictions_mat)
-
-            predictions = predictions_mat.mean(dim=1) + noise[:, i]
-            predictions = predictions.to(self._device)
-            # X_start[:, original_size + i] = predictions
-            X_start[:, original_size + i] = (predictions_mat[:, 0] +
-                                             noise[:, i]).to(self._device)
+            predictions = _nanmean(predictions_mat, dim=1) + noise[:, i]
+            # print(i, X_pred[i], predictions_mat, predictions)
+            X_start[:, original_size + i] = (predictions + noise[:, i]).to(
+                self._device)
 
         # сеты прогнозных значений для каждой точки, в которой будем делать прогноз
         # размер: steps x n_trajectories
-        X_start = X_start[:, original_size:]
+        X_start = X_start[:, original_size:original_size + h_max]
         X_start = X_start.T
         return X_start
 
@@ -217,6 +221,7 @@ class TSProcessor:
                                           n_trajectories,
                                           dim=0)
 
+        training_vectors = self._training_vectors[:, :, :-1]
         training_for_dist = torch.repeat_interleave(
             self._training_vectors[None, :, :, -1], n_trajectories, dim=0)
 
@@ -234,8 +239,8 @@ class TSProcessor:
                 continue
             test_vectors = X_start[:, :original_size + i][:,
                                                           self._last_vectors]
-            dist = _calc_distance_matrix_gpu(self._training_vectors,
-                                             test_vectors)
+
+            dist = _calc_distance_matrix_gpu(training_vectors, test_vectors)
 
             # see https://stackoverflow.com/a/29046530
             wh = torch.where(dist < eps, training_for_dist,
@@ -406,21 +411,11 @@ class TSProcessor:
 def _calc_distance_matrix_gpu(
     training_vectors: torch.Tensor,
     test_vectors: torch.Tensor,
-    point_in_template: int = None,
 ) -> torch.Tensor:
     """
     calculate the distance matrix between training_vectors and test_vectors
     """
 
-    if point_in_template is not None:
-        training_vectors = torch.cat([
-            training_vectors[:, :, :point_in_template],
-            training_vectors[:, :, point_in_template + 1:]
-        ],
-                                     dim=2)
-    else:
-        # drop last point from training vectors
-        training_vectors = training_vectors[:, :, :-1]
     training_vectors = training_vectors[np.newaxis, :, :, :]
 
     # reshaping test_vectors to efficiently calculate the distances
@@ -438,13 +433,3 @@ def _nanmean(v, *args, inplace=False, **kwargs):
     is_nan = torch.isnan(v)
     v[is_nan] = 0
     return v.sum(*args, **kwargs) / (~is_nan).float().sum(*args, **kwargs)
-
-
-# def _swap_training_vec(vec, a, b):
-#     # swap a and b without c:
-#     # a = a + b
-#     # b = a - b
-#     # a = a - b
-#     vec[:, :, a] = vec[:, :, a] + vec[:, :, b]
-#     vec[:, :, b] = vec[:, :, a] - vec[:, :, b]
-#     vec[:, :, a] = vec[:, :, a] - vec[:, :, b]
