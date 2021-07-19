@@ -40,8 +40,6 @@ def plot_trajectories(label,
                       n_trajectories,
                       X_traj_pred,
                       X_pred,
-                      non_pred,
-                      rmse,
                       filename=None):
     fig = plt.figure(figsize=[14, 7])
 
@@ -66,7 +64,7 @@ def plot_trajectories(label,
     plt.subplot(2, 1, 2)
     plt.plot(X_test, label=label, zorder=1)
 
-    plt.ylim(-0.1, 1.1)
+    # plt.ylim(-0.1, 1.1)
 
     for i in range(n_trajectories):
         plt.plot(X_traj_pred[:, i], c='orange', lw=0.5, zorder=0)
