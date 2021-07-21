@@ -110,9 +110,6 @@ class TSProcessor:
                                           n_trajectories,
                                           dim=0)
 
-        # training_for_dist = torch.repeat_interleave(
-        #     self._training_vectors[None, :, :, -1], n_trajectories, dim=0)
-
         torch.manual_seed(random_seed)
         noise = torch.normal(0, noise_amp, size=(n_trajectories, h_max))
 
